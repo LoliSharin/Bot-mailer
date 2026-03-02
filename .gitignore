@@ -8,4 +8,3 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 README.md
-telegram.service.spec.ts

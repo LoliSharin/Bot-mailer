@@ -71,6 +71,22 @@ describe('App e2e', () => {
       .expect({ ok: false });
   });
 
+  it('/chat/message (POST) requires internal secret', () => {
+    return request(app.getHttpServer())
+      .post('/chat/message')
+      .send({ chatId: '1', orderId: 'o-1', from: 'client', text: 'hello' })
+      .expect(401);
+  });
+
+  it('/chat/message (POST) accepts request with internal secret', () => {
+    return request(app.getHttpServer())
+      .post('/chat/message')
+      .set('x-site-api-secret', 'test-secret')
+      .send({ chatId: '1', orderId: 'o-1', from: 'client', text: 'hello' })
+      .expect(201)
+      .expect({ ok: false });
+  });
+
   it('/api/link (GET) returns user for valid token', () => {
     return request(app.getHttpServer())
       .get('/api/link')
@@ -104,5 +120,17 @@ describe('App e2e', () => {
     const body = response.body as { startedAt: string; knownChats: number };
     expect(typeof body.startedAt).toBe('string');
     expect(typeof body.knownChats).toBe('number');
+  });
+
+  it('/user/:chatId (DELETE) requires internal secret', () => {
+    return request(app.getHttpServer()).delete('/user/1').expect(401);
+  });
+
+  it('/user/:chatId (DELETE) disconnects user with internal secret', () => {
+    return request(app.getHttpServer())
+      .delete('/user/1')
+      .set('x-site-api-secret', 'test-secret')
+      .expect(200)
+      .expect({ ok: true });
   });
 });
