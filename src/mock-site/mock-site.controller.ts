@@ -1,10 +1,11 @@
-﻿import {
+import {
   Body,
   Controller,
   Get,
   HttpCode,
   HttpStatus,
   NotFoundException,
+  Param,
   Post,
   Query,
 } from '@nestjs/common';
@@ -34,6 +35,15 @@ export class MockSiteController {
     @Body() payload: { chatId: string; text: string; orderId?: string },
   ) {
     return this.mockSiteService.saveFromTelegram(payload);
+  }
+
+  @Post('chat/:orderId/message')
+  @HttpCode(HttpStatus.OK)
+  postOrderMessage(
+    @Param('orderId') orderId: string,
+    @Body() payload: { chatId: string; text: string },
+  ) {
+    return this.mockSiteService.saveFromTelegramOrderPath(orderId, payload);
   }
 
   @Post('telegram/disconnected')

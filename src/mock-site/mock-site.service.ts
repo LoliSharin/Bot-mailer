@@ -1,4 +1,4 @@
-﻿import { Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 
 type ChatMessage = {
   chatId: string;
@@ -37,6 +37,13 @@ export class MockSiteService {
     });
 
     return { ok: true };
+  }
+
+  saveFromTelegramOrderPath(
+    orderId: string,
+    payload: { chatId: string; text: string },
+  ): { ok: true } {
+    return this.saveFromTelegram({ ...payload, orderId });
   }
 
   markDisconnected(chatId: string): { ok: true } {

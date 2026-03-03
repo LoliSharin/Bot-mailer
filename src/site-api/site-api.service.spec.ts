@@ -1,6 +1,6 @@
-﻿import { HttpService } from '@nestjs/axios';
-import { Test, TestingModule } from '@nestjs/testing';
+import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
+import { Test, TestingModule } from '@nestjs/testing';
 import { of, throwError } from 'rxjs';
 import { SiteApiService } from './site-api.service';
 
@@ -72,7 +72,123 @@ describe('SiteApiService', () => {
     );
   });
 
-  it('returns false when relay to site fails', async () => {
+  it('returns config error when SITE_API_URL is missing for chat relay', async () => {
+    configServiceMock.get.mockImplementation((key: string) => {
+      if (key === 'SITE_API_URL') {
+        return undefined;
+      }
+      if (key === 'SITE_API_SECRET') {
+        return 'secret';
+      }
+      return undefined;
+    });
+
+    const result = await service.forwardMessageFromTelegram({
+      chatId: '123',
+      text: 'hello',
+      orderId: 'o-1',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'config' });
+    expect(httpServiceMock.post).not.toHaveBeenCalled();
+  });
+
+  it('uses legacy contract by default', async () => {
+    configServiceMock.get.mockImplementation((key: string) => {
+      if (key === 'SITE_API_URL') {
+        return 'http://localhost:3000';
+      }
+      if (key === 'SITE_API_SECRET') {
+        return 'secret';
+      }
+      if (key === 'SITE_CHAT_FORWARD_MODE') {
+        return undefined;
+      }
+      return undefined;
+    });
+
+    httpServiceMock.post.mockReturnValue(of({ data: { ok: true } }));
+
+    const result = await service.forwardMessageFromTelegram({
+      chatId: '123',
+      text: 'hello',
+      orderId: 'o-1',
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(httpServiceMock.post).toHaveBeenCalledWith(
+      'http://localhost:3000/api/chat/from-telegram',
+      {
+        chatId: '123',
+        text: 'hello',
+        orderId: 'o-1',
+      },
+      expect.objectContaining({ headers: { 'x-site-api-secret': 'secret' } }),
+    );
+  });
+
+  it('uses order_path contract when enabled', async () => {
+    configServiceMock.get.mockImplementation((key: string) => {
+      if (key === 'SITE_API_URL') {
+        return 'http://localhost:3000';
+      }
+      if (key === 'SITE_API_SECRET') {
+        return 'secret';
+      }
+      if (key === 'SITE_CHAT_FORWARD_MODE') {
+        return 'order_path';
+      }
+      if (key === 'SITE_CHAT_ORDER_PATH_TEMPLATE') {
+        return '/api/chat/{orderId}/message';
+      }
+      return undefined;
+    });
+
+    httpServiceMock.post.mockReturnValue(of({ data: { ok: true } }));
+
+    const result = await service.forwardMessageFromTelegram({
+      chatId: '123',
+      text: 'hello',
+      orderId: 'order-42',
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(httpServiceMock.post).toHaveBeenCalledWith(
+      'http://localhost:3000/api/chat/order-42/message',
+      { chatId: '123', text: 'hello' },
+      expect.objectContaining({ headers: { 'x-site-api-secret': 'secret' } }),
+    );
+  });
+
+  it('returns http error details when relay fails with response status', async () => {
+    configServiceMock.get.mockImplementation((key: string) => {
+      if (key === 'SITE_API_URL') {
+        return 'http://localhost:3000';
+      }
+      if (key === 'SITE_API_SECRET') {
+        return 'secret';
+      }
+      return undefined;
+    });
+
+    httpServiceMock.post.mockReturnValue(
+      throwError(() => ({
+        isAxiosError: true,
+        message: 'not found',
+        response: { status: 404 },
+      })),
+    );
+
+    const result = await service.forwardMessageFromTelegram({
+      chatId: '123',
+      text: 'hello',
+      orderId: 'o-1',
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'http', status: 404 });
+  });
+
+  it('returns network error when relay fails without http response', async () => {
     configServiceMock.get.mockImplementation((key: string) => {
       if (key === 'SITE_API_URL') {
         return 'http://localhost:3000';
@@ -90,8 +206,9 @@ describe('SiteApiService', () => {
     const result = await service.forwardMessageFromTelegram({
       chatId: '123',
       text: 'hello',
+      orderId: 'o-1',
     });
 
-    expect(result).toBe(false);
+    expect(result).toEqual({ ok: false, reason: 'network' });
   });
 });

@@ -57,6 +57,7 @@ type PersistedState = {
   knownChats: string[];
   replyContext: Array<{ key: string; orderId: string }>;
   activeOrdersByChat: Record<string, string[]>;
+  selectedOrderByChat: Record<string, string>;
   linkedUsersByChat: Record<string, LinkedUserState>;
 };
 
@@ -83,6 +84,11 @@ type ActiveOrderRow = {
   order_id: string;
 };
 
+type SelectedOrderRow = {
+  chat_id: string;
+  order_id: string;
+};
+
 type KnownChatRow = {
   chat_id: string;
 };
@@ -95,6 +101,7 @@ export class TelegramService implements OnModuleDestroy {
   private readonly knownChats = new Set<string>();
   private readonly replyContext = new Map<string, string>();
   private readonly activeOrdersByChat = new Map<string, Set<string>>();
+  private readonly selectedOrderByChat = new Map<string, string>();
   private readonly linkedUsersByChat = new Map<string, LinkedUserState>();
 
   private readonly maxReplyContextEntries: number;
@@ -192,19 +199,35 @@ export class TelegramService implements OnModuleDestroy {
       return;
     }
 
+    if (message.text?.startsWith('/chat')) {
+      await this.handleChatCommand(chatId, message.text);
+      return;
+    }
+
     if (message.text) {
       this.stats.incomingTextMessages += 1;
+
+      if (!this.isLinkedAndActive(chatId)) {
+        await this.sendText(
+          chatId,
+          'Сначала подключите Telegram в личном кабинете OneSelJob и запустите бота по ссылке из настроек.',
+        );
+        return;
+      }
 
       const orderId = this.resolveOrderId(
         chatId,
         message.reply_to_message?.message_id,
       );
 
-      if (!orderId && this.hasAmbiguousOrderContext(chatId)) {
-        this.stats.relayAmbiguousContext += 1;
+      if (!orderId) {
+        if (this.hasAmbiguousOrderContext(chatId)) {
+          this.stats.relayAmbiguousContext += 1;
+        }
+
         await this.sendText(
           chatId,
-          'You have multiple active orders. Reply to a message for the required order so the bot can detect context.',
+          'Не удалось определить заказ. Укажите контекст командой /chat <orderId> или ответьте на сообщение по нужному заказу.',
         );
         return;
       }
@@ -215,13 +238,29 @@ export class TelegramService implements OnModuleDestroy {
         orderId,
       });
 
-      if (forwarded) {
+      if (forwarded.ok) {
         this.stats.relayedToSite += 1;
       } else {
         this.stats.relayFailed += 1;
+        if (forwarded.reason === 'http' && forwarded.status === 404) {
+          await this.sendText(
+            chatId,
+            'Заказ не найден или вам недоступен этот диалог. Проверьте номер заказа и выберите контекст заново: /chat <orderId>.',
+          );
+          return;
+        }
+
+        if (forwarded.reason === 'http' && forwarded.status === 403) {
+          await this.sendText(
+            chatId,
+            'У вас нет прав писать в этот чат заказа. Проверьте, что заказ принадлежит вашему аккаунту.',
+          );
+          return;
+        }
+
         await this.sendText(
           chatId,
-          'Message received, but delivery to the website failed. Please try again later.',
+          'Сообщение получено, но его не удалось отправить на веб-сайт. Пожалуйста, повторите попытку позже.',
         );
       }
       return;
@@ -231,7 +270,7 @@ export class TelegramService implements OnModuleDestroy {
       this.stats.incomingUnsupportedMessages += 1;
       await this.sendText(
         chatId,
-        'Files and voice messages are not supported in bot relay. Please send them via website chat.',
+        'Файлы и голосовые сообщения не поддерживаются в bot relay. Пожалуйста, отправляйте их через чат на сайте.',
       );
     }
   }
@@ -295,7 +334,7 @@ export class TelegramService implements OnModuleDestroy {
 
     const result = await this.sendTextDetailed(
       chatId,
-      'Telegram notifications were disabled. You can reconnect in website settings.',
+      'Уведомления в Telegram были отключены. Вы можете повторно подключиться в настройках веб-сайта.',
     );
 
     if (result.ok) {
@@ -356,6 +395,58 @@ export class TelegramService implements OnModuleDestroy {
     };
   }
 
+  private async handleChatCommand(chatId: string, text: string): Promise<void> {
+    if (!this.isLinkedAndActive(chatId)) {
+      await this.sendText(
+        chatId,
+        'Сначала подключите Telegram в личном кабинете OneSelJob и запустите бота по ссылке из настроек.',
+      );
+      return;
+    }
+
+    const rawArgument = text.slice('/chat'.length).trim();
+    if (!rawArgument) {
+      const selectedOrderId = this.getSelectedOrder(chatId);
+      if (selectedOrderId) {
+        await this.sendText(
+          chatId,
+          `Текущий активный заказ: ${selectedOrderId}. Чтобы сбросить контекст, отправьте /chat stop.`,
+        );
+      } else {
+        await this.sendText(
+          chatId,
+          'Активный заказ не выбран. Укажите его командой /chat <orderId>.',
+        );
+      }
+      return;
+    }
+
+    if (rawArgument.toLowerCase() === 'stop') {
+      this.clearChatContext(chatId);
+      await this.sendText(
+        chatId,
+        'Контекст заказа сброшен. Чтобы продолжить переписку, выберите заказ: /chat <orderId>.',
+      );
+      return;
+    }
+
+    const orderId = rawArgument.trim();
+    if (orderId.length < 1 || orderId.length > 64) {
+      await this.sendText(
+        chatId,
+        'Некорректный orderId. Используйте значение длиной от 1 до 64 символов.',
+      );
+      return;
+    }
+
+    this.setSelectedOrder(chatId, orderId);
+    this.addActiveOrder(chatId, orderId);
+    await this.sendText(
+      chatId,
+      `Активный чат установлен: заказ ${orderId}. Теперь отправляйте сообщения обычным текстом.`,
+    );
+  }
+
   private async handleStartCommand(message: TelegramMessage): Promise<void> {
     const chatId = String(message.chat.id);
     const payload = message.text?.split(' ')[1]?.trim();
@@ -371,7 +462,7 @@ export class TelegramService implements OnModuleDestroy {
     if (!payload.startsWith('link_')) {
       await this.sendText(
         chatId,
-        'Invalid link format. Generate a new link on the website.',
+        'Недопустимый формат ссылки. Создайте новую ссылку на веб-сайте.',
       );
       return;
     }
@@ -381,7 +472,7 @@ export class TelegramService implements OnModuleDestroy {
     if (!result) {
       await this.sendText(
         chatId,
-        'Link is invalid or expired. Generate a new link in profile settings.',
+        'Ссылка недействительна или срок ее действия истек. Создайте новую ссылку в настройках профиля',
       );
       return;
     }
@@ -390,7 +481,7 @@ export class TelegramService implements OnModuleDestroy {
 
     await this.sendText(
       chatId,
-      'Telegram connected successfully. Manage notification settings in your website profile.',
+      'Telegram успешно подключился. Измените настройки уведомлений в своем профиле на веб-сайте.',
     );
   }
 
@@ -455,6 +546,11 @@ export class TelegramService implements OnModuleDestroy {
       if (orderId) {
         return orderId;
       }
+    }
+
+    const selectedOrderId = this.selectedOrderByChat.get(chatId);
+    if (selectedOrderId) {
+      return selectedOrderId;
     }
 
     const activeOrders = this.activeOrdersByChat.get(chatId);
@@ -552,6 +648,20 @@ export class TelegramService implements OnModuleDestroy {
     this.schedulePersistState();
   }
 
+  private setSelectedOrder(chatId: string, orderId: string): void {
+    const before = this.selectedOrderByChat.get(chatId);
+    if (before === orderId) {
+      return;
+    }
+
+    this.selectedOrderByChat.set(chatId, orderId);
+    this.schedulePersistState();
+  }
+
+  private getSelectedOrder(chatId: string): string | undefined {
+    return this.selectedOrderByChat.get(chatId);
+  }
+
   private addActiveOrder(chatId: string, orderId: string): void {
     const activeOrders =
       this.activeOrdersByChat.get(chatId) ?? new Set<string>();
@@ -566,6 +676,11 @@ export class TelegramService implements OnModuleDestroy {
 
   private isChatInactive(chatId: string): boolean {
     return this.linkedUsersByChat.get(chatId)?.isActive === false;
+  }
+
+  private isLinkedAndActive(chatId: string): boolean {
+    const userState = this.linkedUsersByChat.get(chatId);
+    return Boolean(userState?.userId && userState.isActive);
   }
 
   private markChatInactive(chatId: string): void {
@@ -596,6 +711,10 @@ export class TelegramService implements OnModuleDestroy {
         this.replyContext.delete(key);
         hasChanges = true;
       }
+    }
+
+    if (this.selectedOrderByChat.delete(chatId)) {
+      hasChanges = true;
     }
 
     if (hasChanges) {
@@ -683,6 +802,7 @@ export class TelegramService implements OnModuleDestroy {
       knownChatsResult,
       replyContextResult,
       activeOrdersResult,
+      selectedOrdersResult,
       usersResult,
     ] = await Promise.all([
       pool.query<KnownChatRow>(
@@ -693,6 +813,9 @@ export class TelegramService implements OnModuleDestroy {
       ),
       pool.query<ActiveOrderRow>(
         'SELECT chat_id, order_id FROM telegram_active_orders',
+      ),
+      pool.query<SelectedOrderRow>(
+        'SELECT chat_id, order_id FROM telegram_selected_order',
       ),
       pool.query<TelegramUserRow>(
         'SELECT chat_id, site_user_id, is_active, linked_at, updated_at, disconnected_at, last_notified FROM telegram_users',
@@ -706,6 +829,7 @@ export class TelegramService implements OnModuleDestroy {
         orderId: row.order_id,
       })),
       activeOrdersByChat: {},
+      selectedOrderByChat: {},
       linkedUsersByChat: {},
     };
 
@@ -713,6 +837,10 @@ export class TelegramService implements OnModuleDestroy {
       const orders = snapshot.activeOrdersByChat[row.chat_id] ?? [];
       orders.push(row.order_id);
       snapshot.activeOrdersByChat[row.chat_id] = orders;
+    }
+
+    for (const row of selectedOrdersResult.rows) {
+      snapshot.selectedOrderByChat[row.chat_id] = row.order_id;
     }
 
     for (const row of usersResult.rows) {
@@ -733,6 +861,7 @@ export class TelegramService implements OnModuleDestroy {
     this.knownChats.clear();
     this.replyContext.clear();
     this.activeOrdersByChat.clear();
+    this.selectedOrderByChat.clear();
     this.linkedUsersByChat.clear();
 
     for (const chatId of state.knownChats ?? []) {
@@ -749,6 +878,15 @@ export class TelegramService implements OnModuleDestroy {
       state.activeOrdersByChat ?? {},
     )) {
       this.activeOrdersByChat.set(chatId, new Set(orders.map(String)));
+    }
+
+    for (const [chatId, orderId] of Object.entries(
+      state.selectedOrderByChat ?? {},
+    )) {
+      const normalizedOrderId = String(orderId);
+      if (normalizedOrderId) {
+        this.selectedOrderByChat.set(chatId, normalizedOrderId);
+      }
     }
 
     for (const [chatId, userState] of Object.entries(
@@ -811,6 +949,7 @@ export class TelegramService implements OnModuleDestroy {
 
       await client.query('DELETE FROM telegram_reply_context');
       await client.query('DELETE FROM telegram_active_orders');
+      await client.query('DELETE FROM telegram_selected_order');
       await client.query('DELETE FROM telegram_known_chats');
       await client.query('DELETE FROM telegram_users');
 
@@ -843,6 +982,15 @@ export class TelegramService implements OnModuleDestroy {
             [chatId, orderId],
           );
         }
+      }
+
+      for (const [chatId, orderId] of Object.entries(
+        snapshot.selectedOrderByChat,
+      )) {
+        await client.query(
+          'INSERT INTO telegram_selected_order (chat_id, order_id, updated_at) VALUES ($1, $2, NOW())',
+          [chatId, orderId],
+        );
       }
 
       for (const [chatId, userState] of Object.entries(
@@ -890,6 +1038,7 @@ export class TelegramService implements OnModuleDestroy {
           ([chatId, orders]) => [chatId, Array.from(orders)],
         ),
       ),
+      selectedOrderByChat: Object.fromEntries(this.selectedOrderByChat),
       linkedUsersByChat: Object.fromEntries(this.linkedUsersByChat.entries()),
     };
   }
@@ -921,6 +1070,14 @@ export class TelegramService implements OnModuleDestroy {
         order_id TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (chat_id, order_id)
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS telegram_selected_order (
+        chat_id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
 
