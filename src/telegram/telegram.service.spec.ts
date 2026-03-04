@@ -51,6 +51,7 @@ describe('TelegramService', () => {
       STATE_STORAGE_BACKEND: undefined,
       STATE_FILE_PATH: undefined,
       MAX_REPLY_CONTEXT_ENTRIES: undefined,
+      MAX_PROCESSED_UPDATE_IDS: undefined,
       STATE_PERSISTENCE_DISABLED: undefined,
     };
 
@@ -133,6 +134,27 @@ describe('TelegramService', () => {
     });
   });
 
+  it('skips duplicate webhook updates by update_id', async () => {
+    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({ ok: true });
+
+    await linkChat();
+    await service.handleUpdate(createTextUpdate('/chat 123', 777, 2));
+    siteApiServiceMock.forwardMessageFromTelegram.mockClear();
+
+    const duplicateUpdate = createTextUpdate('dup text', 777, 50);
+    await service.handleUpdate(duplicateUpdate);
+    await service.handleUpdate(duplicateUpdate);
+
+    expect(siteApiServiceMock.forwardMessageFromTelegram).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(siteApiServiceMock.forwardMessageFromTelegram).toHaveBeenCalledWith({
+      chatId: '777',
+      text: 'dup text',
+      orderId: '123',
+    });
+  });
+
   it('returns current sticky context with /chat', async () => {
     configValues.BOT_TOKEN = 'token123';
     httpServiceMock.post.mockReturnValue(of({ data: { result: { message_id: 55 } } }));
@@ -144,13 +166,14 @@ describe('TelegramService', () => {
     await service.handleUpdate(createTextUpdate('/chat', 777, 3));
 
     expect(siteApiServiceMock.forwardMessageFromTelegram).not.toHaveBeenCalled();
-    expect(httpServiceMock.post).toHaveBeenCalledWith(
-      'https://api.telegram.org/bottoken123/sendMessage',
-      expect.objectContaining({
-        chat_id: '777',
-        text: expect.stringContaining('Текущий активный заказ: 123'),
-      }),
-    );
+    expect(httpServiceMock.post).toHaveBeenCalledTimes(1);
+    const payload = httpServiceMock.post.mock.calls[0]?.[1] as {
+      chat_id: string;
+      text: string;
+    };
+    expect(payload.chat_id).toBe('777');
+    expect(payload.text).toContain('123');
+    expect(payload.text).toContain('/chat stop');
   });
 
   it('clears sticky context with /chat stop', async () => {
@@ -217,13 +240,13 @@ describe('TelegramService', () => {
       text: 'plain text',
       orderId: 'missing-order',
     });
-    expect(httpServiceMock.post).toHaveBeenCalledWith(
-      'https://api.telegram.org/bottoken123/sendMessage',
-      expect.objectContaining({
-        chat_id: '777',
-        text: expect.stringContaining('Заказ не найден'),
-      }),
-    );
+    expect(httpServiceMock.post).toHaveBeenCalledTimes(1);
+    const payload = httpServiceMock.post.mock.calls[0]?.[1] as {
+      chat_id: string;
+      text: string;
+    };
+    expect(payload.chat_id).toBe('777');
+    expect(payload.text).toContain('/chat <orderId>');
   });
 
   it('marks user as disconnected when Telegram API returns 403', async () => {

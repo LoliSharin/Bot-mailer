@@ -8,6 +8,7 @@ describe('SiteApiService', () => {
   let service: SiteApiService;
   let httpServiceMock: { get: jest.Mock; post: jest.Mock };
   let configServiceMock: { get: jest.Mock };
+  let configValues: Record<string, string | undefined>;
 
   beforeEach(async () => {
     httpServiceMock = {
@@ -15,8 +16,17 @@ describe('SiteApiService', () => {
       post: jest.fn(),
     };
 
+    configValues = {
+      SITE_API_URL: undefined,
+      SITE_API_SECRET: 'secret',
+      SITE_CHAT_FORWARD_MODE: undefined,
+      SITE_CHAT_ORDER_PATH_TEMPLATE: undefined,
+      SITE_CHAT_FORWARD_MAX_ATTEMPTS: '1',
+      SITE_CHAT_FORWARD_BASE_DELAY_MS: '1',
+    };
+
     configServiceMock = {
-      get: jest.fn(),
+      get: jest.fn((key: string) => configValues[key]),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -31,16 +41,6 @@ describe('SiteApiService', () => {
   });
 
   it('returns null when SITE_API_URL is missing for link resolving', async () => {
-    configServiceMock.get.mockImplementation((key: string) => {
-      if (key === 'SITE_API_URL') {
-        return undefined;
-      }
-      if (key === 'SITE_API_SECRET') {
-        return 'secret';
-      }
-      return undefined;
-    });
-
     const result = await service.resolveLinkToken('any-token');
 
     expect(result).toBeNull();
@@ -48,16 +48,7 @@ describe('SiteApiService', () => {
   });
 
   it('resolves token through site api', async () => {
-    configServiceMock.get.mockImplementation((key: string) => {
-      if (key === 'SITE_API_URL') {
-        return 'http://localhost:3000';
-      }
-      if (key === 'SITE_API_SECRET') {
-        return 'secret';
-      }
-      return undefined;
-    });
-
+    configValues.SITE_API_URL = 'http://localhost:3000';
     httpServiceMock.get.mockReturnValue(of({ data: { userId: 'u-1' } }));
 
     const result = await service.resolveLinkToken('valid-token');
@@ -73,16 +64,6 @@ describe('SiteApiService', () => {
   });
 
   it('returns config error when SITE_API_URL is missing for chat relay', async () => {
-    configServiceMock.get.mockImplementation((key: string) => {
-      if (key === 'SITE_API_URL') {
-        return undefined;
-      }
-      if (key === 'SITE_API_SECRET') {
-        return 'secret';
-      }
-      return undefined;
-    });
-
     const result = await service.forwardMessageFromTelegram({
       chatId: '123',
       text: 'hello',
@@ -94,19 +75,7 @@ describe('SiteApiService', () => {
   });
 
   it('uses legacy contract by default', async () => {
-    configServiceMock.get.mockImplementation((key: string) => {
-      if (key === 'SITE_API_URL') {
-        return 'http://localhost:3000';
-      }
-      if (key === 'SITE_API_SECRET') {
-        return 'secret';
-      }
-      if (key === 'SITE_CHAT_FORWARD_MODE') {
-        return undefined;
-      }
-      return undefined;
-    });
-
+    configValues.SITE_API_URL = 'http://localhost:3000';
     httpServiceMock.post.mockReturnValue(of({ data: { ok: true } }));
 
     const result = await service.forwardMessageFromTelegram({
@@ -128,22 +97,9 @@ describe('SiteApiService', () => {
   });
 
   it('uses order_path contract when enabled', async () => {
-    configServiceMock.get.mockImplementation((key: string) => {
-      if (key === 'SITE_API_URL') {
-        return 'http://localhost:3000';
-      }
-      if (key === 'SITE_API_SECRET') {
-        return 'secret';
-      }
-      if (key === 'SITE_CHAT_FORWARD_MODE') {
-        return 'order_path';
-      }
-      if (key === 'SITE_CHAT_ORDER_PATH_TEMPLATE') {
-        return '/api/chat/{orderId}/message';
-      }
-      return undefined;
-    });
-
+    configValues.SITE_API_URL = 'http://localhost:3000';
+    configValues.SITE_CHAT_FORWARD_MODE = 'order_path';
+    configValues.SITE_CHAT_ORDER_PATH_TEMPLATE = '/api/chat/{orderId}/message';
     httpServiceMock.post.mockReturnValue(of({ data: { ok: true } }));
 
     const result = await service.forwardMessageFromTelegram({
@@ -160,16 +116,28 @@ describe('SiteApiService', () => {
     );
   });
 
-  it('returns http error details when relay fails with response status', async () => {
-    configServiceMock.get.mockImplementation((key: string) => {
-      if (key === 'SITE_API_URL') {
-        return 'http://localhost:3000';
-      }
-      if (key === 'SITE_API_SECRET') {
-        return 'secret';
-      }
-      return undefined;
+  it('retries transient network error and eventually succeeds', async () => {
+    configValues.SITE_API_URL = 'http://localhost:3000';
+    configValues.SITE_CHAT_FORWARD_MAX_ATTEMPTS = '2';
+    configValues.SITE_CHAT_FORWARD_BASE_DELAY_MS = '1';
+
+    httpServiceMock.post
+      .mockReturnValueOnce(throwError(() => new Error('connection reset')))
+      .mockReturnValueOnce(of({ data: { ok: true } }));
+
+    const result = await service.forwardMessageFromTelegram({
+      chatId: '123',
+      text: 'hello',
+      orderId: 'o-1',
     });
+
+    expect(result).toEqual({ ok: true });
+    expect(httpServiceMock.post).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry on 404 response', async () => {
+    configValues.SITE_API_URL = 'http://localhost:3000';
+    configValues.SITE_CHAT_FORWARD_MAX_ATTEMPTS = '3';
 
     httpServiceMock.post.mockReturnValue(
       throwError(() => ({
@@ -186,18 +154,13 @@ describe('SiteApiService', () => {
     });
 
     expect(result).toEqual({ ok: false, reason: 'http', status: 404 });
+    expect(httpServiceMock.post).toHaveBeenCalledTimes(1);
   });
 
-  it('returns network error when relay fails without http response', async () => {
-    configServiceMock.get.mockImplementation((key: string) => {
-      if (key === 'SITE_API_URL') {
-        return 'http://localhost:3000';
-      }
-      if (key === 'SITE_API_SECRET') {
-        return 'secret';
-      }
-      return undefined;
-    });
+  it('retries network error and returns failure after max attempts', async () => {
+    configValues.SITE_API_URL = 'http://localhost:3000';
+    configValues.SITE_CHAT_FORWARD_MAX_ATTEMPTS = '3';
+    configValues.SITE_CHAT_FORWARD_BASE_DELAY_MS = '1';
 
     httpServiceMock.post.mockReturnValue(
       throwError(() => new Error('connection refused')),
@@ -210,5 +173,6 @@ describe('SiteApiService', () => {
     });
 
     expect(result).toEqual({ ok: false, reason: 'network' });
+    expect(httpServiceMock.post).toHaveBeenCalledTimes(3);
   });
 });

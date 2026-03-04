@@ -22,6 +22,7 @@ type SendResult = {
 type RuntimeStats = {
   startedAt: string;
   webhookUpdates: number;
+  duplicateUpdatesSkipped: number;
   incomingTextMessages: number;
   incomingUnsupportedMessages: number;
   relayedToSite: number;
@@ -103,8 +104,12 @@ export class TelegramService implements OnModuleDestroy {
   private readonly activeOrdersByChat = new Map<string, Set<string>>();
   private readonly selectedOrderByChat = new Map<string, string>();
   private readonly linkedUsersByChat = new Map<string, LinkedUserState>();
+  private readonly processedUpdateIds = new Set<number>();
+  private readonly processingUpdateIds = new Set<number>();
+  private readonly processedUpdateOrder: number[] = [];
 
   private readonly maxReplyContextEntries: number;
+  private readonly maxProcessedUpdateEntries: number;
   private readonly filePersistenceEnabled: boolean;
   private readonly stateFilePath: string;
   private readonly shouldAttemptPostgres: boolean;
@@ -117,6 +122,7 @@ export class TelegramService implements OnModuleDestroy {
 
   private readonly stats = {
     webhookUpdates: 0,
+    duplicateUpdatesSkipped: 0,
     incomingTextMessages: 0,
     incomingUnsupportedMessages: 0,
     relayedToSite: 0,
@@ -156,6 +162,15 @@ export class TelegramService implements OnModuleDestroy {
         ? maxReplyContextFromEnv
         : 5000;
 
+    const maxProcessedUpdateEntriesFromEnv = Number(
+      this.configService.get<string>('MAX_PROCESSED_UPDATE_IDS') ?? 10000,
+    );
+    this.maxProcessedUpdateEntries =
+      Number.isFinite(maxProcessedUpdateEntriesFromEnv) &&
+      maxProcessedUpdateEntriesFromEnv > 0
+        ? maxProcessedUpdateEntriesFromEnv
+        : 10000;
+
     const backendPreference = (
       this.configService.get<string>('STATE_STORAGE_BACKEND') ?? 'auto'
     ).toLowerCase();
@@ -186,6 +201,30 @@ export class TelegramService implements OnModuleDestroy {
     await this.stateReady;
     this.stats.webhookUpdates += 1;
 
+    const updateId = Number(update.update_id);
+    if (!Number.isFinite(updateId)) {
+      return;
+    }
+
+    if (this.hasSeenUpdate(updateId)) {
+      this.stats.duplicateUpdatesSkipped += 1;
+      return;
+    }
+
+    this.processingUpdateIds.add(updateId);
+    let shouldRememberUpdate = false;
+    try {
+      await this.processUpdate(update);
+      shouldRememberUpdate = true;
+    } finally {
+      this.processingUpdateIds.delete(updateId);
+      if (shouldRememberUpdate) {
+        this.rememberProcessedUpdate(updateId);
+      }
+    }
+  }
+
+  private async processUpdate(update: TelegramUpdateDto): Promise<void> {
     const message = update.message ?? update.edited_message;
     if (!message) {
       return;
@@ -210,7 +249,7 @@ export class TelegramService implements OnModuleDestroy {
       if (!this.isLinkedAndActive(chatId)) {
         await this.sendText(
           chatId,
-          'Сначала подключите Telegram в личном кабинете OneSelJob и запустите бота по ссылке из настроек.',
+          'Connect Telegram from your OneSelJob profile settings and start the bot from that link first.',
         );
         return;
       }
@@ -227,7 +266,7 @@ export class TelegramService implements OnModuleDestroy {
 
         await this.sendText(
           chatId,
-          'Не удалось определить заказ. Укажите контекст командой /chat <orderId> или ответьте на сообщение по нужному заказу.',
+          'Could not resolve order context. Use /chat <orderId> or reply to a message from the required order.',
         );
         return;
       }
@@ -245,7 +284,7 @@ export class TelegramService implements OnModuleDestroy {
         if (forwarded.reason === 'http' && forwarded.status === 404) {
           await this.sendText(
             chatId,
-            'Заказ не найден или вам недоступен этот диалог. Проверьте номер заказа и выберите контекст заново: /chat <orderId>.',
+            'Order was not found or this chat is unavailable for your account. Check order id and select context again: /chat <orderId>.',
           );
           return;
         }
@@ -253,14 +292,14 @@ export class TelegramService implements OnModuleDestroy {
         if (forwarded.reason === 'http' && forwarded.status === 403) {
           await this.sendText(
             chatId,
-            'У вас нет прав писать в этот чат заказа. Проверьте, что заказ принадлежит вашему аккаунту.',
+            'You do not have permission to send messages to this order chat.',
           );
           return;
         }
 
         await this.sendText(
           chatId,
-          'Сообщение получено, но его не удалось отправить на веб-сайт. Пожалуйста, повторите попытку позже.',
+          'Message was received, but forwarding to the website failed. Please try again later.',
         );
       }
       return;
@@ -270,11 +309,10 @@ export class TelegramService implements OnModuleDestroy {
       this.stats.incomingUnsupportedMessages += 1;
       await this.sendText(
         chatId,
-        'Файлы и голосовые сообщения не поддерживаются в bot relay. Пожалуйста, отправляйте их через чат на сайте.',
+        'Files and voice messages are not supported in bot relay. Please send them via website chat.',
       );
     }
   }
-
   async sendNotify(dto: NotifyDto): Promise<boolean> {
     await this.stateReady;
 
@@ -334,7 +372,7 @@ export class TelegramService implements OnModuleDestroy {
 
     const result = await this.sendTextDetailed(
       chatId,
-      'Уведомления в Telegram были отключены. Вы можете повторно подключиться в настройках веб-сайта.',
+      'Telegram notifications were disabled. You can reconnect in website settings.',
     );
 
     if (result.ok) {
@@ -346,7 +384,6 @@ export class TelegramService implements OnModuleDestroy {
 
     return result.ok;
   }
-
   async sendBroadcast(
     dto: BroadcastDto,
   ): Promise<{ total: number; sent: number; failed: number }> {
@@ -399,7 +436,7 @@ export class TelegramService implements OnModuleDestroy {
     if (!this.isLinkedAndActive(chatId)) {
       await this.sendText(
         chatId,
-        'Сначала подключите Telegram в личном кабинете OneSelJob и запустите бота по ссылке из настроек.',
+        'Connect Telegram from your OneSelJob profile settings and start the bot from that link first.',
       );
       return;
     }
@@ -410,12 +447,12 @@ export class TelegramService implements OnModuleDestroy {
       if (selectedOrderId) {
         await this.sendText(
           chatId,
-          `Текущий активный заказ: ${selectedOrderId}. Чтобы сбросить контекст, отправьте /chat stop.`,
+          `Current active order: ${selectedOrderId}. To reset context send /chat stop.`,
         );
       } else {
         await this.sendText(
           chatId,
-          'Активный заказ не выбран. Укажите его командой /chat <orderId>.',
+          'No active order selected. Use /chat <orderId>.',
         );
       }
       return;
@@ -425,7 +462,7 @@ export class TelegramService implements OnModuleDestroy {
       this.clearChatContext(chatId);
       await this.sendText(
         chatId,
-        'Контекст заказа сброшен. Чтобы продолжить переписку, выберите заказ: /chat <orderId>.',
+        'Order context has been reset. To continue chatting select an order: /chat <orderId>.',
       );
       return;
     }
@@ -434,7 +471,7 @@ export class TelegramService implements OnModuleDestroy {
     if (orderId.length < 1 || orderId.length > 64) {
       await this.sendText(
         chatId,
-        'Некорректный orderId. Используйте значение длиной от 1 до 64 символов.',
+        'Invalid orderId. Use a value with length from 1 to 64 characters.',
       );
       return;
     }
@@ -443,10 +480,9 @@ export class TelegramService implements OnModuleDestroy {
     this.addActiveOrder(chatId, orderId);
     await this.sendText(
       chatId,
-      `Активный чат установлен: заказ ${orderId}. Теперь отправляйте сообщения обычным текстом.`,
+      `Active chat context is set: order ${orderId}. Send regular text messages now.`,
     );
   }
-
   private async handleStartCommand(message: TelegramMessage): Promise<void> {
     const chatId = String(message.chat.id);
     const payload = message.text?.split(' ')[1]?.trim();
@@ -462,7 +498,7 @@ export class TelegramService implements OnModuleDestroy {
     if (!payload.startsWith('link_')) {
       await this.sendText(
         chatId,
-        'Недопустимый формат ссылки. Создайте новую ссылку на веб-сайте.',
+        'Invalid link format. Generate a new link on the website.',
       );
       return;
     }
@@ -472,7 +508,7 @@ export class TelegramService implements OnModuleDestroy {
     if (!result) {
       await this.sendText(
         chatId,
-        'Ссылка недействительна или срок ее действия истек. Создайте новую ссылку в настройках профиля',
+        'Link is invalid or expired. Generate a new link in profile settings.',
       );
       return;
     }
@@ -481,10 +517,9 @@ export class TelegramService implements OnModuleDestroy {
 
     await this.sendText(
       chatId,
-      'Telegram успешно подключился. Измените настройки уведомлений в своем профиле на веб-сайте.',
+      'Telegram connected successfully. Manage notification settings in your website profile.',
     );
   }
-
   private async sendText(chatId: string, text: string): Promise<boolean> {
     const result = await this.sendTextDetailed(chatId, text);
     return result.ok;
@@ -597,6 +632,29 @@ export class TelegramService implements OnModuleDestroy {
       this.markChatInactive(chatId);
       this.clearChatContext(chatId);
       await this.siteApiService.markUserDisconnected(chatId);
+    }
+  }
+
+  private hasSeenUpdate(updateId: number): boolean {
+    return (
+      this.processedUpdateIds.has(updateId) ||
+      this.processingUpdateIds.has(updateId)
+    );
+  }
+
+  private rememberProcessedUpdate(updateId: number): void {
+    if (this.processedUpdateIds.has(updateId)) {
+      return;
+    }
+
+    this.processedUpdateIds.add(updateId);
+    this.processedUpdateOrder.push(updateId);
+
+    while (this.processedUpdateOrder.length > this.maxProcessedUpdateEntries) {
+      const oldestUpdateId = this.processedUpdateOrder.shift();
+      if (oldestUpdateId !== undefined) {
+        this.processedUpdateIds.delete(oldestUpdateId);
+      }
     }
   }
 

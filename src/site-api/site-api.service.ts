@@ -80,27 +80,25 @@ export class SiteApiService {
         ? { chatId: payload.chatId, text: payload.text }
         : payload;
 
-    try {
-      await firstValueFrom(
-        this.httpService.post(endpoint, body, {
-          headers: this.getInternalHeaders(),
-        }),
-      );
-      return { ok: true };
-    } catch (error) {
-      if (isAxiosError(error)) {
-        const status = error.response?.status;
-        this.logger.warn(
-          `Failed to relay Telegram message to site. status=${status ?? 'n/a'} message=${error.message}`,
-        );
-        return { ok: false, reason: 'http', status };
+    const maxAttempts = this.resolveForwardMaxAttempts();
+    const retryDelayMs = this.resolveForwardRetryDelayMs();
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const result = await this.forwardMessageToSite(endpoint, body);
+      if (result.ok) {
+        return result;
       }
 
-      this.logger.warn(
-        `Failed to relay Telegram message to site: ${(error as Error).message}`,
-      );
-      return { ok: false, reason: 'network' };
+      const isLastAttempt = attempt === maxAttempts;
+      if (isLastAttempt || !this.shouldRetryForwardResult(result)) {
+        return result;
+      }
+
+      const delay = retryDelayMs * 2 ** (attempt - 1);
+      await this.sleep(delay);
     }
+
+    return { ok: false, reason: 'network' };
   }
 
   async markUserDisconnected(chatId: string): Promise<void> {
@@ -136,6 +134,79 @@ export class SiteApiService {
     const rawMode =
       this.configService.get<string>('SITE_CHAT_FORWARD_MODE') ?? 'legacy';
     return rawMode === 'order_path' ? 'order_path' : 'legacy';
+  }
+
+  private async forwardMessageToSite(
+    endpoint: string,
+    body: Record<string, string | undefined>,
+  ): Promise<ForwardFromTelegramResult> {
+    try {
+      await firstValueFrom(
+        this.httpService.post(endpoint, body, {
+          headers: this.getInternalHeaders(),
+        }),
+      );
+      return { ok: true };
+    } catch (error) {
+      if (isAxiosError(error)) {
+        const status = error.response?.status;
+        this.logger.warn(
+          `Failed to relay Telegram message to site. status=${status ?? 'n/a'} message=${error.message}`,
+        );
+        return { ok: false, reason: 'http', status };
+      }
+
+      this.logger.warn(
+        `Failed to relay Telegram message to site: ${(error as Error).message}`,
+      );
+      return { ok: false, reason: 'network' };
+    }
+  }
+
+  private shouldRetryForwardResult(result: ForwardFromTelegramResult): boolean {
+    if (result.ok) {
+      return false;
+    }
+
+    if (result.reason === 'network') {
+      return true;
+    }
+
+    if (result.reason !== 'http' || result.status === undefined) {
+      return false;
+    }
+
+    return (
+      result.status === 408 || result.status === 429 || result.status >= 500
+    );
+  }
+
+  private resolveForwardMaxAttempts(): number {
+    const raw = Number(
+      this.configService.get<string>('SITE_CHAT_FORWARD_MAX_ATTEMPTS') ?? 3,
+    );
+    if (!Number.isFinite(raw) || raw < 1) {
+      return 3;
+    }
+
+    return Math.min(Math.trunc(raw), 10);
+  }
+
+  private resolveForwardRetryDelayMs(): number {
+    const raw = Number(
+      this.configService.get<string>('SITE_CHAT_FORWARD_BASE_DELAY_MS') ?? 250,
+    );
+    if (!Number.isFinite(raw) || raw < 1) {
+      return 250;
+    }
+
+    return Math.min(Math.trunc(raw), 2000);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
   }
 
   private buildOrderPathUrl(baseUrl: string, orderId: string): string {

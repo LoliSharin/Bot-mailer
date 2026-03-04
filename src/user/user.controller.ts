@@ -9,7 +9,7 @@ export class UserController {
 
   @Delete(':chatId')
   async removeUser(@Param('chatId') chatId: string) {
-    public ok = await this.telegramService.disconnectUser(chatId);
+    const ok = await this.telegramService.disconnectUser(chatId);
     return { ok };
   }
 }

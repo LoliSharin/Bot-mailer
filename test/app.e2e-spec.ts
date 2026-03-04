@@ -42,6 +42,8 @@ describe('App e2e', () => {
     process.env.SITE_API_URL = `http://127.0.0.1:${port}`;
     process.env.SITE_CHAT_FORWARD_MODE = forwardMode;
     process.env.SITE_CHAT_ORDER_PATH_TEMPLATE = '/api/chat/{orderId}/message';
+    process.env.SITE_CHAT_FORWARD_MAX_ATTEMPTS = '1';
+    process.env.SITE_CHAT_FORWARD_BASE_DELAY_MS = '1';
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -379,6 +381,62 @@ describe('App e2e', () => {
           chatId: '1003',
           text: 'hello path contract',
           orderId: 'order-path-1',
+        }),
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('skips duplicated webhook update_id and forwards message only once', async () => {
+    const app = await createApp('legacy');
+    try {
+      await postTelegramWebhook(app, {
+        update_id: 40,
+        message: {
+          message_id: 40,
+          text: '/start link_valid-token',
+          chat: { id: 1004, type: 'private' },
+        },
+      });
+
+      await postTelegramWebhook(app, {
+        update_id: 41,
+        message: {
+          message_id: 41,
+          text: '/chat 501',
+          chat: { id: 1004, type: 'private' },
+        },
+      });
+
+      const duplicatedPayload = {
+        update_id: 42,
+        message: {
+          message_id: 42,
+          text: 'duplicate message',
+          chat: { id: 1004, type: 'private' },
+        },
+      };
+
+      await postTelegramWebhook(app, duplicatedPayload);
+      await postTelegramWebhook(app, duplicatedPayload);
+
+      const messagesResponse = await request(app.getHttpServer())
+        .get('/api/chat/messages')
+        .expect(200);
+
+      const messages = messagesResponse.body as Array<{
+        chatId: string;
+        text: string;
+        orderId?: string;
+      }>;
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toEqual(
+        expect.objectContaining({
+          chatId: '1004',
+          text: 'duplicate message',
+          orderId: '501',
         }),
       );
     } finally {
