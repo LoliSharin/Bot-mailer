@@ -1,4 +1,5 @@
-import {
+﻿import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -34,6 +35,10 @@ export class MockSiteController {
   postFromTelegram(
     @Body() payload: { chatId: string; text: string; orderId?: string },
   ) {
+    if (payload.orderId && !this.mockSiteService.hasOrder(payload.orderId)) {
+      throw new NotFoundException('Order not found');
+    }
+
     return this.mockSiteService.saveFromTelegram(payload);
   }
 
@@ -43,7 +48,27 @@ export class MockSiteController {
     @Param('orderId') orderId: string,
     @Body() payload: { chatId: string; text: string },
   ) {
+    if (!this.mockSiteService.hasOrder(orderId)) {
+      throw new NotFoundException('Order not found');
+    }
+
     return this.mockSiteService.saveFromTelegramOrderPath(orderId, payload);
+  }
+
+  @Get('orders')
+  getOrders() {
+    return this.mockSiteService.getOrders();
+  }
+
+  @Post('orders')
+  @HttpCode(HttpStatus.CREATED)
+  createOrder(@Body() payload: { orderId?: string; title?: string }) {
+    const orderId = payload.orderId?.trim();
+    if (!orderId) {
+      throw new BadRequestException('orderId is required');
+    }
+
+    return this.mockSiteService.createOrder(orderId, payload.title);
   }
 
   @Post('telegram/disconnected')

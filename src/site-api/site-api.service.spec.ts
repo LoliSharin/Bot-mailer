@@ -40,14 +40,14 @@ describe('SiteApiService', () => {
     service = module.get<SiteApiService>(SiteApiService);
   });
 
-  it('returns null when SITE_API_URL is missing for link resolving', async () => {
+  it('возвращает значение null, если SITE_API_URL отсутствует для разрешения ссылок', async () => {
     const result = await service.resolveLinkToken('any-token');
 
     expect(result).toBeNull();
     expect(httpServiceMock.get).not.toHaveBeenCalled();
   });
 
-  it('resolves token through site api', async () => {
+  it('разрешает токен через api сайта', async () => {
     configValues.SITE_API_URL = 'http://localhost:3000';
     httpServiceMock.get.mockReturnValue(of({ data: { userId: 'u-1' } }));
 
@@ -63,7 +63,7 @@ describe('SiteApiService', () => {
     );
   });
 
-  it('returns config error when SITE_API_URL is missing for chat relay', async () => {
+  it('возвращает ошибку конфигурации, когда SITE_API_URL отсутствует для ретрансляции чата', async () => {
     const result = await service.forwardMessageFromTelegram({
       chatId: '123',
       text: 'hello',
@@ -74,7 +74,7 @@ describe('SiteApiService', () => {
     expect(httpServiceMock.post).not.toHaveBeenCalled();
   });
 
-  it('uses legacy contract by default', async () => {
+  it('по умолчанию используется устаревший контракт', async () => {
     configValues.SITE_API_URL = 'http://localhost:3000';
     httpServiceMock.post.mockReturnValue(of({ data: { ok: true } }));
 
@@ -96,7 +96,7 @@ describe('SiteApiService', () => {
     );
   });
 
-  it('uses order_path contract when enabled', async () => {
+  it('использует контракт order_path, если он включен', async () => {
     configValues.SITE_API_URL = 'http://localhost:3000';
     configValues.SITE_CHAT_FORWARD_MODE = 'order_path';
     configValues.SITE_CHAT_ORDER_PATH_TEMPLATE = '/api/chat/{orderId}/message';
@@ -116,7 +116,7 @@ describe('SiteApiService', () => {
     );
   });
 
-  it('retries transient network error and eventually succeeds', async () => {
+  it('повторяет временную сетевую ошибку и в конечном итоге добивается успеха', async () => {
     configValues.SITE_API_URL = 'http://localhost:3000';
     configValues.SITE_CHAT_FORWARD_MAX_ATTEMPTS = '2';
     configValues.SITE_CHAT_FORWARD_BASE_DELAY_MS = '1';
@@ -135,7 +135,7 @@ describe('SiteApiService', () => {
     expect(httpServiceMock.post).toHaveBeenCalledTimes(2);
   });
 
-  it('does not retry on 404 response', async () => {
+  it('не повторяет попытку при ответе 404', async () => {
     configValues.SITE_API_URL = 'http://localhost:3000';
     configValues.SITE_CHAT_FORWARD_MAX_ATTEMPTS = '3';
 
@@ -157,7 +157,7 @@ describe('SiteApiService', () => {
     expect(httpServiceMock.post).toHaveBeenCalledTimes(1);
   });
 
-  it('retries network error and returns failure after max attempts', async () => {
+  it('повторяет попытку обнаружения сетевой ошибки и возвращает сбой после максимального количества попыток', async () => {
     configValues.SITE_API_URL = 'http://localhost:3000';
     configValues.SITE_CHAT_FORWARD_MAX_ATTEMPTS = '3';
     configValues.SITE_CHAT_FORWARD_BASE_DELAY_MS = '1';

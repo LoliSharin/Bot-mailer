@@ -1,4 +1,4 @@
-import { HttpService } from '@nestjs/axios';
+﻿import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { isAxiosError } from 'axios';
@@ -249,7 +249,7 @@ export class TelegramService implements OnModuleDestroy {
       if (!this.isLinkedAndActive(chatId)) {
         await this.sendText(
           chatId,
-          'Connect Telegram from your OneSelJob profile settings and start the bot from that link first.',
+          'Сначала подключите Telegram в личном кабинете OneSelJob и запустите бота по ссылке из настроек.',
         );
         return;
       }
@@ -266,7 +266,7 @@ export class TelegramService implements OnModuleDestroy {
 
         await this.sendText(
           chatId,
-          'Could not resolve order context. Use /chat <orderId> or reply to a message from the required order.',
+          'Не удалось определить заказ. Укажите контекст командой /chat <orderId> или ответьте на сообщение по нужному заказу.',
         );
         return;
       }
@@ -284,7 +284,7 @@ export class TelegramService implements OnModuleDestroy {
         if (forwarded.reason === 'http' && forwarded.status === 404) {
           await this.sendText(
             chatId,
-            'Order was not found or this chat is unavailable for your account. Check order id and select context again: /chat <orderId>.',
+            'Заказ не найден или вам недоступен этот диалог. Проверьте номер заказа и выберите контекст заново: /chat <orderId>.',
           );
           return;
         }
@@ -292,14 +292,14 @@ export class TelegramService implements OnModuleDestroy {
         if (forwarded.reason === 'http' && forwarded.status === 403) {
           await this.sendText(
             chatId,
-            'You do not have permission to send messages to this order chat.',
+            'У вас нет прав писать в этот чат заказа. Проверьте, что заказ принадлежит вашему аккаунту.',
           );
           return;
         }
 
         await this.sendText(
           chatId,
-          'Message was received, but forwarding to the website failed. Please try again later.',
+          'Сообщение получено, но его не удалось отправить на веб-сайт. Пожалуйста, повторите попытку позже.',
         );
       }
       return;
@@ -309,14 +309,14 @@ export class TelegramService implements OnModuleDestroy {
       this.stats.incomingUnsupportedMessages += 1;
       await this.sendText(
         chatId,
-        'Files and voice messages are not supported in bot relay. Please send them via website chat.',
+        'Файлы и голосовые сообщения пока не поддерживаются в bot relay. Пожалуйста, отправляйте их через чат на сайте.',
       );
     }
   }
   async sendNotify(dto: NotifyDto): Promise<boolean> {
     await this.stateReady;
 
-    const fallbackText = `Event: ${dto.event}`;
+    const fallbackText = `Событие: ${dto.event}`;
     const dataText = dto.data ? `\n${JSON.stringify(dto.data)}` : '';
     const text = dto.text ?? `${fallbackText}${dataText}`;
 
@@ -338,7 +338,7 @@ export class TelegramService implements OnModuleDestroy {
     await this.stateReady;
     this.rememberChat(dto.chatId);
 
-    const text = `Order #${dto.orderId}\nFrom: ${dto.from}\n\n${dto.text}`;
+    const text = `Заказ #${dto.orderId}\nОт: ${dto.from}\n\n${dto.text}`;
     const result = await this.sendTextDetailed(dto.chatId, text);
 
     if (result.ok) {
@@ -372,7 +372,7 @@ export class TelegramService implements OnModuleDestroy {
 
     const result = await this.sendTextDetailed(
       chatId,
-      'Telegram notifications were disabled. You can reconnect in website settings.',
+      'Уведомления в Telegram были отключены. Вы можете повторно подключиться в настройках веб-сайта.',
     );
 
     if (result.ok) {
@@ -432,11 +432,20 @@ export class TelegramService implements OnModuleDestroy {
     };
   }
 
+  async getActiveLinkedChatIds(): Promise<string[]> {
+    await this.stateReady;
+    return Array.from(this.linkedUsersByChat.entries())
+      .filter(([, userState]) =>
+        Boolean(userState.userId && userState.isActive),
+      )
+      .map(([chatId]) => chatId);
+  }
+
   private async handleChatCommand(chatId: string, text: string): Promise<void> {
     if (!this.isLinkedAndActive(chatId)) {
       await this.sendText(
         chatId,
-        'Connect Telegram from your OneSelJob profile settings and start the bot from that link first.',
+        'Сначала подключите Telegram в личном кабинете OneSelJob и запустите бота по ссылке из настроек.',
       );
       return;
     }
@@ -447,12 +456,12 @@ export class TelegramService implements OnModuleDestroy {
       if (selectedOrderId) {
         await this.sendText(
           chatId,
-          `Current active order: ${selectedOrderId}. To reset context send /chat stop.`,
+          `Текущий активный заказ: ${selectedOrderId}. Чтобы сбросить контекст, отправьте /chat stop.`,
         );
       } else {
         await this.sendText(
           chatId,
-          'No active order selected. Use /chat <orderId>.',
+          'Активный заказ не выбран. Укажите его командой /chat <orderId>.',
         );
       }
       return;
@@ -462,7 +471,7 @@ export class TelegramService implements OnModuleDestroy {
       this.clearChatContext(chatId);
       await this.sendText(
         chatId,
-        'Order context has been reset. To continue chatting select an order: /chat <orderId>.',
+        'Контекст заказа сброшен. Чтобы продолжить переписку, выберите заказ: /chat <orderId>.',
       );
       return;
     }
@@ -471,7 +480,7 @@ export class TelegramService implements OnModuleDestroy {
     if (orderId.length < 1 || orderId.length > 64) {
       await this.sendText(
         chatId,
-        'Invalid orderId. Use a value with length from 1 to 64 characters.',
+        'Некорректный orderId. Используйте значение длиной от 1 до 64 символов.',
       );
       return;
     }
@@ -480,7 +489,7 @@ export class TelegramService implements OnModuleDestroy {
     this.addActiveOrder(chatId, orderId);
     await this.sendText(
       chatId,
-      `Active chat context is set: order ${orderId}. Send regular text messages now.`,
+      `Активный чат установлен: заказ ${orderId}. Теперь отправляйте сообщения обычным текстом.`,
     );
   }
   private async handleStartCommand(message: TelegramMessage): Promise<void> {
@@ -490,7 +499,7 @@ export class TelegramService implements OnModuleDestroy {
     if (!payload) {
       await this.sendText(
         chatId,
-        'Authorize via the website: https://oneselfjob.com',
+        'Авторизуйтесь через сайт: https://oneselfjob.com',
       );
       return;
     }
@@ -498,7 +507,7 @@ export class TelegramService implements OnModuleDestroy {
     if (!payload.startsWith('link_')) {
       await this.sendText(
         chatId,
-        'Invalid link format. Generate a new link on the website.',
+        'Недопустимый формат ссылки. Создайте новую ссылку на веб-сайте.',
       );
       return;
     }
@@ -508,7 +517,7 @@ export class TelegramService implements OnModuleDestroy {
     if (!result) {
       await this.sendText(
         chatId,
-        'Link is invalid or expired. Generate a new link in profile settings.',
+        'Ссылка недействительна или срок её действия истёк. Создайте новую ссылку в настройках профиля.',
       );
       return;
     }
@@ -517,7 +526,7 @@ export class TelegramService implements OnModuleDestroy {
 
     await this.sendText(
       chatId,
-      'Telegram connected successfully. Manage notification settings in your website profile.',
+      'Telegram успешно подключён. Измените настройки уведомлений в своём профиле на веб-сайте.',
     );
   }
   private async sendText(chatId: string, text: string): Promise<boolean> {
