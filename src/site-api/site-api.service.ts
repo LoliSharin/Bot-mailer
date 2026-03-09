@@ -41,6 +41,7 @@ export class SiteApiService {
         this.httpService.get<ResolveLinkResponse>(`${baseUrl}/api/link`, {
           params: { token },
           headers: this.getInternalHeaders(),
+          timeout: this.resolveSiteApiTimeoutMs(),
         }),
       );
 
@@ -112,7 +113,10 @@ export class SiteApiService {
         this.httpService.post(
           `${baseUrl}/api/telegram/disconnected`,
           { chatId },
-          { headers: this.getInternalHeaders() },
+          {
+            headers: this.getInternalHeaders(),
+            timeout: this.resolveSiteApiTimeoutMs(),
+          },
         ),
       );
     } catch (error) {
@@ -144,6 +148,7 @@ export class SiteApiService {
       await firstValueFrom(
         this.httpService.post(endpoint, body, {
           headers: this.getInternalHeaders(),
+          timeout: this.resolveSiteApiTimeoutMs(),
         }),
       );
       return { ok: true };
@@ -201,6 +206,17 @@ export class SiteApiService {
     }
 
     return Math.min(Math.trunc(raw), 2000);
+  }
+
+  private resolveSiteApiTimeoutMs(): number {
+    const raw = Number(
+      this.configService.get<string>('SITE_API_TIMEOUT_MS') ?? 8000,
+    );
+    if (!Number.isFinite(raw) || raw < 1000) {
+      return 8000;
+    }
+
+    return Math.min(Math.trunc(raw), 30000);
   }
 
   private sleep(ms: number): Promise<void> {

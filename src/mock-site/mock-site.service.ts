@@ -147,8 +147,11 @@ export class MockSiteService {
 
     let recipients = participantRecipients;
     if (recipients.length === 0) {
-      const activeChatIds = await this.telegramService.getActiveLinkedChatIds();
-      recipients = activeChatIds.filter((chatId) => chatId !== payload.chatId);
+      const orderLinkedChats =
+        await this.telegramService.getActiveLinkedChatIdsByOrder(orderId);
+      recipients = orderLinkedChats.filter(
+        (chatId) => chatId !== payload.chatId,
+      );
     }
 
     let relayed = 0;

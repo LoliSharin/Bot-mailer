@@ -441,6 +441,14 @@ export class TelegramService implements OnModuleDestroy {
       .map(([chatId]) => chatId);
   }
 
+  async getActiveLinkedChatIdsByOrder(orderId: string): Promise<string[]> {
+    await this.stateReady;
+    return Array.from(this.selectedOrderByChat.entries())
+      .filter(([, selectedOrderId]) => selectedOrderId === orderId)
+      .map(([chatId]) => chatId)
+      .filter((chatId) => this.isLinkedAndActive(chatId));
+  }
+
   private async handleChatCommand(chatId: string, text: string): Promise<void> {
     if (!this.isLinkedAndActive(chatId)) {
       await this.sendText(
@@ -555,6 +563,7 @@ export class TelegramService implements OnModuleDestroy {
             text,
             disable_web_page_preview: true,
           },
+          { timeout: this.resolveTelegramApiTimeoutMs() },
         ),
       );
 
@@ -604,6 +613,17 @@ export class TelegramService implements OnModuleDestroy {
 
     const [singleOrder] = Array.from(activeOrders);
     return singleOrder;
+  }
+
+  private resolveTelegramApiTimeoutMs(): number {
+    const raw = Number(
+      this.configService.get<string>('TELEGRAM_API_TIMEOUT_MS') ?? 10000,
+    );
+    if (!Number.isFinite(raw) || raw < 1000) {
+      return 10000;
+    }
+
+    return Math.min(Math.trunc(raw), 30000);
   }
 
   private hasAmbiguousOrderContext(chatId: string): boolean {

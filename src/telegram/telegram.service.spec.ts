@@ -106,24 +106,33 @@ describe('TelegramService', () => {
         chat_id: '123',
         text: 'hello',
       }),
+      expect.objectContaining({ timeout: 10000 }),
     );
   });
 
   it('does not forward text from non-linked chat', async () => {
-    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({ ok: true });
+    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({
+      ok: true,
+    });
 
     await service.handleUpdate(createTextUpdate('plain text'));
 
-    expect(siteApiServiceMock.forwardMessageFromTelegram).not.toHaveBeenCalled();
+    expect(
+      siteApiServiceMock.forwardMessageFromTelegram,
+    ).not.toHaveBeenCalled();
   });
 
   it('sets sticky order via /chat and then forwards regular text with this order', async () => {
-    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({ ok: true });
+    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({
+      ok: true,
+    });
 
     await linkChat();
     await service.handleUpdate(createTextUpdate('/chat 123', 777, 2));
 
-    expect(siteApiServiceMock.forwardMessageFromTelegram).not.toHaveBeenCalled();
+    expect(
+      siteApiServiceMock.forwardMessageFromTelegram,
+    ).not.toHaveBeenCalled();
 
     await service.handleUpdate(createTextUpdate('plain text', 777, 3));
 
@@ -135,7 +144,9 @@ describe('TelegramService', () => {
   });
 
   it('skips duplicate webhook updates by update_id', async () => {
-    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({ ok: true });
+    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({
+      ok: true,
+    });
 
     await linkChat();
     await service.handleUpdate(createTextUpdate('/chat 123', 777, 2));
@@ -157,7 +168,9 @@ describe('TelegramService', () => {
 
   it('returns current sticky context with /chat', async () => {
     configValues.BOT_TOKEN = 'token123';
-    httpServiceMock.post.mockReturnValue(of({ data: { result: { message_id: 55 } } }));
+    httpServiceMock.post.mockReturnValue(
+      of({ data: { result: { message_id: 55 } } }),
+    );
 
     await linkChat();
     await service.handleUpdate(createTextUpdate('/chat 123', 777, 2));
@@ -165,41 +178,64 @@ describe('TelegramService', () => {
     httpServiceMock.post.mockClear();
     await service.handleUpdate(createTextUpdate('/chat', 777, 3));
 
-    expect(siteApiServiceMock.forwardMessageFromTelegram).not.toHaveBeenCalled();
+    expect(
+      siteApiServiceMock.forwardMessageFromTelegram,
+    ).not.toHaveBeenCalled();
     expect(httpServiceMock.post).toHaveBeenCalledTimes(1);
-    const payload = httpServiceMock.post.mock.calls[0]?.[1] as {
+    const firstCall = httpServiceMock.post.mock.calls[0] as [
+      string,
+      {
+        chat_id: string;
+        text: string;
+      },
+    ];
+    const payload = firstCall[1];
+    expect(payload).toBeDefined();
+    const typedPayload = payload as {
       chat_id: string;
       text: string;
     };
-    expect(payload.chat_id).toBe('777');
-    expect(payload.text).toContain('123');
-    expect(payload.text).toContain('/chat stop');
+    expect(typedPayload.chat_id).toBe('777');
+    expect(typedPayload.text).toContain('123');
+    expect(typedPayload.text).toContain('/chat stop');
   });
 
   it('clears sticky context with /chat stop', async () => {
-    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({ ok: true });
+    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({
+      ok: true,
+    });
 
     await linkChat();
     await service.handleUpdate(createTextUpdate('/chat 123', 777, 2));
     await service.handleUpdate(createTextUpdate('/chat stop', 777, 3));
     await service.handleUpdate(createTextUpdate('plain text', 777, 4));
 
-    expect(siteApiServiceMock.forwardMessageFromTelegram).not.toHaveBeenCalled();
+    expect(
+      siteApiServiceMock.forwardMessageFromTelegram,
+    ).not.toHaveBeenCalled();
   });
 
   it('does not forward linked chat message without resolved order context', async () => {
-    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({ ok: true });
+    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({
+      ok: true,
+    });
 
     await linkChat();
     await service.handleUpdate(createTextUpdate('plain text', 777, 2));
 
-    expect(siteApiServiceMock.forwardMessageFromTelegram).not.toHaveBeenCalled();
+    expect(
+      siteApiServiceMock.forwardMessageFromTelegram,
+    ).not.toHaveBeenCalled();
   });
 
   it('prefers reply context orderId over sticky orderId', async () => {
     configValues.BOT_TOKEN = 'token123';
-    httpServiceMock.post.mockReturnValue(of({ data: { result: { message_id: 999 } } }));
-    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({ ok: true });
+    httpServiceMock.post.mockReturnValue(
+      of({ data: { result: { message_id: 999 } } }),
+    );
+    siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({
+      ok: true,
+    });
 
     await linkChat();
     await service.handleUpdate(createTextUpdate('/chat sticky-order', 777, 2));
@@ -222,7 +258,9 @@ describe('TelegramService', () => {
 
   it('sends explicit message when site api returns 404 for order', async () => {
     configValues.BOT_TOKEN = 'token123';
-    httpServiceMock.post.mockReturnValue(of({ data: { result: { message_id: 77 } } }));
+    httpServiceMock.post.mockReturnValue(
+      of({ data: { result: { message_id: 77 } } }),
+    );
     siteApiServiceMock.forwardMessageFromTelegram.mockResolvedValue({
       ok: false,
       reason: 'http',
@@ -241,12 +279,21 @@ describe('TelegramService', () => {
       orderId: 'missing-order',
     });
     expect(httpServiceMock.post).toHaveBeenCalledTimes(1);
-    const payload = httpServiceMock.post.mock.calls[0]?.[1] as {
+    const firstCall = httpServiceMock.post.mock.calls[0] as [
+      string,
+      {
+        chat_id: string;
+        text: string;
+      },
+    ];
+    const payload = firstCall[1];
+    expect(payload).toBeDefined();
+    const typedPayload = payload as {
       chat_id: string;
       text: string;
     };
-    expect(payload.chat_id).toBe('777');
-    expect(payload.text).toContain('/chat <orderId>');
+    expect(typedPayload.chat_id).toBe('777');
+    expect(typedPayload.text).toContain('/chat <orderId>');
   });
 
   it('marks user as disconnected when Telegram API returns 403', async () => {
